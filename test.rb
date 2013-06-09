@@ -6,18 +6,20 @@ require 'test/unit'
 $:.unshift File.join(File.dirname(__FILE__), 'lib')
 require 'php_serialize'
 
-TestStruct = Struct.new(:name, :value)
 class TestClass
 	attr_accessor :name
 	attr_accessor :value
 
-	def initialize(name = nil, value = nil)
-		@name = name
-		@value = value
+	def initialize(vals)
+		@name = vals['name']
+		@value = vals['value']
 	end
 
 	def to_assoc
-		[['name', @name], ['value', @value]]
+    {
+      'name' => @name,
+      'value' => @value,
+    }
 	end
 
 	def ==(other)
@@ -25,10 +27,27 @@ class TestClass
 	end
 end
 
-ClassMap = {
-	TestStruct.name.capitalize.intern => TestStruct,
-	TestClass.name.capitalize.intern => TestClass
-}
+module Test
+	module Nested
+		class Class
+			attr_accessor :name
+			attr_accessor :value
+
+			def initialize(vals)
+				@name = vals[0]
+				@value = vals[1]
+			end
+
+			def to_assoc
+				[@name, @value]
+			end
+
+			def ==(other)
+				other.class == self.class and other.name == @name and other.value == @value
+			end
+		end
+	end
+end
 
 class TestPhpSerialize < Test::Unit::TestCase
 	def self.test(ruby, php, opts = {})
@@ -43,7 +62,7 @@ class TestPhpSerialize < Test::Unit::TestCase
 				serialized = PHP.serialize(ruby)
 				assert_equal php, serialized
 
-				unserialized = PHP.unserialize(serialized, ClassMap)
+				unserialized = PHP.unserialize(serialized, {})
 				case ruby
 				when Symbol
 					assert_equal ruby.to_s, unserialized
@@ -68,10 +87,10 @@ class TestPhpSerialize < Test::Unit::TestCase
 	test [nil, true, false, 42, 4.2, 'test'], 'a:6:{i:0;N;i:1;b:1;i:2;b:0;i:3;i:42;i:4;d:4.2;i:5;s:4:"test";}',
 		:name => 'Array'
 	test({'foo' => 'bar', 4 => [5,4,3,2]}, 'a:2:{s:3:"foo";s:3:"bar";i:4;a:4:{i:0;i:5;i:1;i:4;i:2;i:3;i:3;i:2;}}', :name => 'Hash')
-	test TestStruct.new("Foo", 65), 'O:10:"teststruct":2:{s:4:"name";s:3:"Foo";s:5:"value";i:65;}',
-		:name => 'Struct'
-	test TestClass.new("Foo", 65), 'O:9:"testclass":2:{s:4:"name";s:3:"Foo";s:5:"value";i:65;}',
+	test TestClass.new({'name' => "Foo", 'value' => 65}), 'C:9:"TestClass":44:{a:2:{s:4:"name";s:3:"Foo";s:5:"value";i:65;}}',
 		:name => 'Class'
+	test Test::Nested::Class.new(["Foo", 65]), 'C:17:"Test\\Nested\\Class":29:{a:2:{i:0;s:3:"Foo";i:1;i:65;}}',
+		:name => "Test\\Nested\\Class"
 
   # PHP counts multibyte string, not string length
   def test_multibyte_string
@@ -111,6 +130,20 @@ class TestPhpSerialize < Test::Unit::TestCase
   def test_new_struct_creation
     assert_nothing_raised do
       phps = 'O:8:"stdClass":2:{s:3:"url";s:17:"/legacy/index.php";s:8:"dateTime";s:19:"2012-10-24 22:29:13";}'
+      unserialized = PHP.unserialize(phps)
+    end
+  end
+
+  def test_new_struct_creation
+    assert_nothing_raised do
+      phps = 'C:11:"Foo\Bar\Zoo":177:{a:3:{s:2:"id";i:1;s:5:"email";s:20:"abcdef@abcdefghij.kl";s:14:"hashedPassword";s:88:"eu0PlU6khhh89kkuidhbkjsdsffdsfsdjsdgsdgsmwFHlfldfjlfdbdlfjbldfjndfjnldfjnljnlkgdjnlkgj==";}}'
+      unserialized = PHP.unserialize(phps)
+    end
+  end
+
+  def test_new_struct_creation
+    assert_nothing_raised do
+      phps = "a:2:{i:0;C:3:\"Foo\":177:{a:3:{s:2:\"id\";i:1;s:5:\"email\";s:20:\"abcdef@abcdefghijklm\";s:14:\"hashedPassword\";s:88:\"lkjglkjglknrglkndlknglerij;jj;oaaageairgjoi;aejrg;aejrhi;jhjerijhgijdfklgjkfljbdbklrjgeu\";}}i:1;b:1}"
       unserialized = PHP.unserialize(phps)
     end
   end

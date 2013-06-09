@@ -115,11 +115,9 @@ module PHP
 				if var.respond_to?(:to_assoc)
 					v = var.to_assoc
 					# encode as Object with same name
-					s << "O:#{var.class.to_s.length}:\"#{var.class.to_s.downcase}\":#{v.length}:{"
-					v.each do |k,v|
-						s << "#{PHP.serialize(k.to_s, assoc)}#{PHP.serialize(v, assoc)}"
-					end
-					s << '}'
+					klass_str = var.class.to_s.split('::').join("\\")
+					str = PHP.serialize(v, assoc)
+					s << "C:#{klass_str.length}:\"#{klass_str}\":#{str.length}:{#{str}}"
 				else
 					raise TypeError, "Unable to serialize type #{var.class}"
 				end
@@ -253,38 +251,56 @@ private
 			when 'O' # object, O:length:"class":length:{[attribute][value]...}
 				# class name (lowercase in PHP, grr)
 				len = string.read_until(':').to_i + 3 # quotes, seperator
-				klass = string.read(len)[1...-2].capitalize.intern # read it, kill useless quotes
+				klass_str = string.read(len)[1...-2].split('\\').join('::') # read it, kill useless quotes
 
 				# read the attributes
-				attrs = []
+				attrs = {}
 				len = string.read_until('{').to_i
 
 				len.times do
-					attr = (do_unserialize(string, classmap, assoc))
-					attrs << [attr.intern, (attr << '=').intern, do_unserialize(string, classmap, assoc)]
+					key = (do_unserialize(string, classmap, assoc))
+					attrs[key] = do_unserialize(string, classmap, assoc)
 				end
 				string.read(1)
 
+				klass = nil
 				val = nil
-				# See if we need to map to a particular object
-				if classmap.has_key?(klass)
-					val = classmap[klass].new
-				elsif Struct.const_defined?(klass) # Nope; see if there's a Struct
-					classmap[klass] = val = Struct.const_get(klass)
-					val = val.new
-				else # Nope; see if there's a Constant
-					begin
-						classmap[klass] = val = Module.const_get(klass)
-
-						val = val.new
-					rescue NameError # Nope; make a new Struct
-						classmap[klass] = val = Struct.new(klass.to_s, *attrs.collect { |v| v[0].to_s })
-						val = val.new
-					end
+				begin
+					klass = classmap[klass_str] ||= klass_str.split('::').inject(Module){|ns,c| ns.const_get(c.to_sym)}
+				rescue NameError
 				end
 
-				attrs.each do |attr,attrassign,v|
-					val.__send__(attrassign, v)
+				if klass
+					val = klass.new(attrs)
+				else
+					val = [klass_str, attrs]
+				end
+
+			when 'C' # object, C:length:"class":length:{[attribute][value]...}
+				# class name with namespace
+				len = string.read_until(':').to_i + 3 # quotes, seperator
+				klass_str = string.read(len)[1...-2].split('\\').join('::') # read it, kill useless quotes
+
+				# read the attributes
+				len = string.read_until('{').to_i
+
+				substring = string.read(len)
+				attrs = (do_unserialize(StringIOReader.new(substring), classmap, assoc))
+				string.read(1)
+
+				klass = nil
+				val = nil
+				# See if we need to map to a particular object
+				begin
+					klass = classmap[klass_str] ||= klass_str.split('::').inject(Module){|ns,c| ns.const_get(c.to_sym)}
+
+				rescue NameError
+				end
+
+				if klass
+					val = klass.new(attrs)
+				else
+					val = [klass_str, attrs]
 				end
 
 			when 's' # string, s:length:"data";
